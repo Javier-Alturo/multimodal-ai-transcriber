@@ -1,0 +1,10 @@
+# Dependencias del profesor de ingles (py teacher.py)
+faster-whisper
+ollama
+pyttsx3
+sounddevice
+numpy
+
+# Grabador simple (py main.py)
+SpeechRecognition
+pyaudio

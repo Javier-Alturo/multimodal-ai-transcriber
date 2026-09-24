@@ -1,0 +1,6 @@
+opencv-python
+mediapipe
+SpeechRecognition
+sounddevice
+deep-translator
+pyttsx3
