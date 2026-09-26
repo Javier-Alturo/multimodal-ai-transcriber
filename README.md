@@ -7,176 +7,193 @@
 ![License](https://img.shields.io/badge/license-MIT-purple?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
-**Multimodal AI Transcriber** es una aplicación de escritorio que combina **reconocimiento de voz en tiempo real** con **visión por computadora** para crear una experiencia de transcripción controlada por gestos. El sistema escucha tu micrófono continuamente mientras tu cámara detecta un gesto de mano específico — al mostrar una **palma abierta**, la aplicación se detiene automáticamente y guarda tanto la transcripción como el audio y el video de la sesión.
+**Multimodal AI Transcriber** is a desktop app that combines **real-time speech recognition** with **computer vision** for gesture-controlled transcription. It listens to your microphone the whole time while your camera watches for one hand gesture: when you show an **open palm**, the app stops and saves the transcript, the audio and the video of the session.
 
 ---
 
-## ✨ Características Principales
+## ✨ Key Features
 
-- **Modo Aprendizaje de Inglés (`--learning`)**: Habla en español, la aplicación lo traduce al inglés y un asistente de voz lo pronuncia para que puedas practicar tu pronunciación (actuando como tu profesor personal).
-- **Auto-Detección de Micrófono SoloCast**: Prioriza y se conecta automáticamente al micrófono HyperX SoloCast si está disponible.
-- **Transcripción Continua en Tiempo Real**: Escucha tu micrófono en un hilo paralelo usando `SpeechRecognition` + Google Speech API, sin interrumpir la detección de gestos.
-- **Control por Gestos (Palma Abierta)**: Usa MediaPipe Hand Landmarker para detectar cuando los 4 dedos principales están extendidos — ningún botón necesario para detener la grabación.
-- **Sesiones con Timestamp**: Cada ejecución crea una carpeta nueva en `recordings/<YYYY-MM-DD_HH-MM-SS>/` con 3 archivos: `transcription.txt`, `audio.wav` y `video.mp4`.
-- **Calibración de Ruido Ambiental**: El módulo de transcripción ajusta automáticamente el umbral de energía al entorno antes de empezar a escuchar.
-- **Guardado Seguro de Audio**: Todos los fragmentos de audio capturados se ensamblan en un único archivo WAV al finalizar la sesión.
-- **Grabación de Video Limpia**: La cámara graba el video sin overlays ni anotaciones para que el archivo final sea limpio.
-- **Auto-descarga del Modelo AI**: Si el modelo de MediaPipe no está presente, se descarga automáticamente desde Google Storage en el primer uso.
+- **English learning mode (`--learning`):** speak in Spanish, the app translates it into English and a voice assistant reads it aloud so you can practice your pronunciation.
+- **Local English teacher (`teacher.py`):** a speech-to-speech tutor that runs entirely on your machine, with Whisper for speech-to-text, a local LLM through Ollama and local text-to-speech. You talk, it answers and corrects you.
+- **Microphone auto-detection:** prefers a configured microphone (a HyperX SoloCast by default, set in `audio_devices.py`) and falls back to any available one.
+- **Continuous real-time transcription:** listens in a parallel thread with `SpeechRecognition` + the Google Speech API, without blocking gesture detection.
+- **Gesture control (open palm):** MediaPipe Hand Landmarker detects when your 4 main fingers are extended, so you don't need a button to stop recording.
+- **Timestamped sessions:** each run creates a new folder `recordings/<YYYY-MM-DD_HH-MM-SS>/` with 3 files: `transcription.txt`, `audio.wav` and `video.mp4`.
+- **Background noise calibration:** the transcriber adjusts its energy threshold to the room before it starts listening.
+- **Safe audio saving:** every captured audio chunk is joined into a single WAV file at the end of the session.
+- **Clean video:** the camera records without overlays, so the final file is clean.
+- **Automatic model download:** if the MediaPipe model is missing, it downloads from Google Storage on first use.
 
 ---
 
-## 🏗️ ¿Cómo Funciona?
+## 🏗️ How It Works
 
-El sistema tiene dos módulos que corren en paralelo y se sincronizan a través de señales:
+Two modules run in parallel and stay in sync through signals:
 
 ```
-Usuario ejecuta: python main.py
+User runs: python main.py
         │
-        ├── Crea carpeta de sesión → recordings/<timestamp>/
+        ├── Creates the session folder → recordings/<timestamp>/
         │
-        ├── [HILO DAEMON]  Transcriber.start()
+        ├── [DAEMON THREAD]  Transcriber.start()
         │       │
-        │       ├── Calibra micrófono (1.5s de silencio)
-        │       ├── Escucha en bucle (timeout=3s, frase max=15s)
-        │       ├── Google Speech API → texto reconocido
-        │       └── Escribe texto en transcription.txt
+        │       ├── Calibrates the microphone (1.5 s of silence)
+        │       ├── Listens in a loop (timeout = 3 s, max phrase = 15 s)
+        │       ├── Google Speech API → recognized text
+        │       └── Writes the text to transcription.txt
         │
-        └── [HILO PRINCIPAL]  GestureRecognizer.run()
+        └── [MAIN THREAD]  GestureRecognizer.run()
                 │
-                ├── Abre cámara (OpenCV VideoCapture)
-                ├── Configura VideoWriter → video.mp4
-                ├── Frame a frame → MediaPipe Hand Landmarker
-                ├── Detecta landmarks de mano
-                ├── is_open_palm() → 4 dedos extendidos?
-                │       └── SÍ → detiene cámara → return True
-                └── Tecla ESC → salida manual → return False
+                ├── Opens the camera (OpenCV VideoCapture)
+                ├── Sets up the VideoWriter → video.mp4
+                ├── Frame by frame → MediaPipe Hand Landmarker
+                ├── Detects the hand landmarks
+                ├── is_open_palm() → 4 fingers extended?
+                │       └── YES → stops the camera → return True
+                └── ESC key → manual exit → return False
         │
         ↓
 Transcriber.stop()
-        ├── Señal de parada al hilo daemon
-        ├── Ensambla todos los frames de audio
-        └── Guarda audio.wav completo
+        ├── Signals the daemon thread to stop
+        ├── Joins all the audio frames
+        └── Saves the complete audio.wav
 ```
 
-### Lógica de Detección de Palma Abierta
+### Open-palm detection logic
 
-El método `is_open_palm()` compara la posición Y de las puntas de los dedos (landmarks 8, 12, 16, 20) contra sus articulaciones PIP (landmarks 6, 10, 14, 18). Si las 4 puntas están **por encima** de sus PIPs en el eje Y, se considera palma abierta:
+`is_open_palm()` compares the Y position of the fingertips (landmarks 8, 12, 16, 20) with their PIP joints (landmarks 6, 10, 14, 18). If all 4 tips are **above** their PIP joints on the Y axis, the hand counts as an open palm:
 
 ```python
-# Si tip.y < pip.y → el dedo está extendido (hacia arriba en imagen)
+# If tip.y < pip.y → the finger is extended (pointing up in the image)
 open_fingers = sum(1 for tip, pip in zip(tips, pips)
                    if hand_landmarks[tip].y < hand_landmarks[pip].y)
-return open_fingers == 4  # Los 4 dedos principales extendidos
+return open_fingers == 4  # all 4 main fingers extended
 ```
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📁 Project Structure
 
 ```
 multimodal-ai-transcriber/
-├── main.py                   # Punto de entrada — orquesta transcripción y gestos
-├── transcription.py          # Módulo de Speech-to-Text (hilo daemon)
-├── gesture_recognition.py    # Módulo de visión con MediaPipe (hilo principal)
-├── requirements.txt          # Dependencias del proyecto
-├── hand_landmarker.task      # Modelo AI de MediaPipe (auto-descarga si no existe)
-├── .gitignore                # Excluye venv, pycache, recordings y modelo binario
-└── recordings/               # Sesiones guardadas (generado en ejecución)
+├── main.py                   # Entry point — runs transcription and gestures together
+├── transcription.py          # Speech-to-text module (daemon thread)
+├── gesture_recognition.py    # MediaPipe vision module (main thread)
+├── video_recorder.py         # Camera recording
+├── teacher.py                # Local English teacher (speech-to-speech)
+├── english_teacher.py        # Tutor logic and prompts (Ollama)
+├── local_stt.py              # Local speech-to-text (Whisper, with Google fallback)
+├── local_tts.py              # Local text-to-speech (pyttsx3)
+├── push_to_talk.py           # Push-to-talk recording
+├── audio_devices.py          # Microphone selection
+├── check_mic.py              # Microphone diagnostics
+├── list_devices.py           # Lists audio devices
+├── requirements.txt          # Dependencies for the transcriber
+├── requirements-teacher.txt  # Dependencies for the English teacher
+└── recordings/               # Saved sessions (created at runtime)
     └── 2025-05-14_10-30-00/
-        ├── transcription.txt # Texto transcrito de la sesión
-        ├── audio.wav         # Audio completo de la sesión
-        └── video.mp4         # Video grabado de la cámara
+        ├── transcription.txt # Session transcript
+        ├── audio.wav         # Full session audio
+        └── video.mp4         # Camera video
 ```
 
 ---
 
-## ⚙️ Módulos en Detalle
+## ⚙️ Modules in Detail
 
 ### 🎤 `transcription.py` — Transcriber
 
-| Atributo / Método | Descripción |
+| Attribute / Method | Description |
 |---|---|
-| `__init__(output_file, audio_file)` | Inicializa recognizer, micrófono y crea el archivo de transcripción |
-| `start()` | Lanza el hilo daemon de escucha en background |
-| `_listen_loop()` | Bucle principal: calibra, escucha, reconoce y escribe |
-| `stop()` | Señal de parada, espera al hilo y guarda el WAV final |
-| `energy_threshold = 300` | Umbral de sensibilidad del micrófono (ajustado dinámicamente) |
-| `phrase_time_limit = 15s` | Duración máxima de una frase continua |
-| `language = "en-US"` | Idioma de reconocimiento de Google Speech API |
+| `__init__(output_file, audio_file)` | Sets up the recognizer and microphone and creates the transcript file |
+| `start()` | Starts the background listening thread |
+| `_listen_loop()` | Main loop: calibrates, listens, recognizes and writes |
+| `stop()` | Signals the thread to stop, waits for it and saves the final WAV |
+| `energy_threshold = 300` | Microphone sensitivity (adjusted dynamically) |
+| `phrase_time_limit = 15s` | Maximum length of a continuous phrase |
+| `language = "en-US"` | Google Speech API recognition language |
 
 ### 👋 `gesture_recognition.py` — GestureRecognizer
 
-| Atributo / Método | Descripción |
+| Attribute / Method | Description |
 |---|---|
-| `__init__(video_writer_path)` | Descarga el modelo si no existe, inicializa MediaPipe y la cámara |
-| `is_open_palm(hand_landmarks)` | Evalúa si los 4 dedos principales están extendidos |
-| `run()` | Bucle de frames: detección, dibujado de landmarks y escritura de video |
-| `num_hands = 1` | Solo detecta una mano a la vez |
-| `min_hand_detection_confidence = 0.5` | Umbral de confianza para detectar una mano |
-| `min_tracking_confidence = 0.5` | Umbral de confianza para el tracking frame a frame |
+| `__init__(video_writer_path)` | Downloads the model if needed and sets up MediaPipe and the camera |
+| `is_open_palm(hand_landmarks)` | Checks whether the 4 main fingers are extended |
+| `run()` | Frame loop: detection, landmark drawing and video writing |
+| `num_hands = 1` | Detects one hand at a time |
+| `min_hand_detection_confidence = 0.5` | Confidence threshold to detect a hand |
+| `min_tracking_confidence = 0.5` | Confidence threshold for frame-to-frame tracking |
 
 ---
 
-## 🚀 Instalación y Uso
+## 🚀 Installation and Usage
 
-### Requisitos Previos
+### Prerequisites
 
 - Python 3.10+
-- Cámara web funcional
-- Micrófono funcional
-- Conexión a internet (para Google Speech API y descarga del modelo la primera vez)
+- A working webcam
+- A working microphone
+- Internet connection (for the Google Speech API and the first model download)
 
-### Pasos
+### Steps
 
 ```bash
-# 1. Clonar el repositorio
-git clone https://github.com/Javier-Alturo/Multimodal-AI-Transcriber.git
-cd Multimodal-AI-Transcriber
+# 1. Clone the repository
+git clone https://github.com/Javier-Alturo/multimodal-ai-transcriber.git
+cd multimodal-ai-transcriber
 
-# 2. Crear entorno virtual
+# 2. Create a virtual environment
 python -m venv venv
 
-# En Windows:
+# Windows:
 venv\Scripts\activate
 
-# En macOS/Linux:
+# macOS/Linux:
 source venv/bin/activate
 
-# 3. Instalar dependencias
+# 3. Install the dependencies
 pip install -r requirements.txt
 
-# 4. Ejecutar la aplicación
+# 4. Run the app
 python main.py
 ```
 
-> **Nota:** En el primer uso, la aplicación descarga automáticamente el modelo `hand_landmarker.task` (~7.5 MB) desde Google Storage. Solo ocurre una vez.
+> **Note:** on first use, the app downloads the `hand_landmarker.task` model (~7.5 MB) from Google Storage. This only happens once.
 
-### Flujo de Uso
+### How to use it
 
-1. Ejecuta `python main.py` (o usa `python main.py --learning` para iniciar el Modo Profesor de Inglés)
-2. Permanece **en silencio 1.5 segundos** mientras el micrófono se calibra
-3. Empieza a **hablar** — el texto aparecerá en `recordings/<timestamp>/transcription.txt`
-4. Muestra una **palma abierta** a la cámara para detener la sesión
-5. Los archivos `transcription.txt`, `audio.wav` y `video.mp4` quedan guardados en la carpeta de sesión
+1. Run `python main.py` (or `python main.py --learning` for English learning mode)
+2. Stay **silent for 1.5 seconds** while the microphone calibrates
+3. Start **speaking** — the text appears in `recordings/<timestamp>/transcription.txt`
+4. Show an **open palm** to the camera to end the session
+5. `transcription.txt`, `audio.wav` and `video.mp4` are saved in the session folder
+
+### Local English teacher
+
+```bash
+pip install -r requirements-teacher.txt
+ollama pull llama3.2
+python teacher.py
+```
+
+Press `|` to start recording, and `|` again to send what you said. The teacher answers out loud.
 
 ---
 
-## 📦 Dependencias
+## 📦 Dependencies
 
-| Librería | Uso |
+| Library | Used for |
 |---|---|
-| `opencv-python` | Captura de cámara, escritura de video y dibujado de landmarks |
-| `mediapipe` | Hand Landmarker para detección y tracking de gestos de mano |
-| `SpeechRecognition` | Interfaz de micrófono y reconocimiento de voz vía Google API |
-| `sounddevice` | Captura de audio, reemplazando pyaudio para mayor compatibilidad |
-| `deep-translator` | Traducción automática para el Modo Aprendizaje |
-| `pyttsx3` | Text-to-Speech (TTS) para escuchar el guion en inglés |
+| `opencv-python` | Camera capture, video writing and landmark drawing |
+| `mediapipe` | Hand Landmarker for gesture detection and tracking |
+| `SpeechRecognition` | Microphone interface and speech recognition through the Google API |
+| `sounddevice` | Audio capture (replaces pyaudio for better compatibility) |
+| `deep-translator` | Automatic translation for learning mode |
+| `pyttsx3` | Text-to-speech, to hear the English sentence |
+| `faster-whisper` | Local speech-to-text for the English teacher |
+| `ollama` | Local LLM for the English teacher |
 
-```bash
-pip install -r requirements.txt
-```
-
-> **Windows:** Si `pyaudio` falla al instalar, usa el wheel precompilado:
+> **Windows:** if `pyaudio` fails to install, use the precompiled wheel:
 > ```bash
 > pip install pipwin
 > pipwin install pyaudio
@@ -186,49 +203,50 @@ pip install -r requirements.txt
 
 ## 🗺️ Roadmap
 
-### ✅ Completado
-- Transcripción continua de voz en hilo paralelo
-- Control de parada por gesto de palma abierta con MediaPipe
-- Grabación y guardado de audio WAV completo
-- Grabación de video MP4 sincronizada
-- Sesiones con carpetas de timestamp automático
-- Auto-descarga del modelo de MediaPipe
-- Calibración dinámica de ruido ambiental
+### ✅ Done
+- Continuous speech transcription in a parallel thread
+- Open-palm stop gesture with MediaPipe
+- Full WAV audio recording and saving
+- Synchronized MP4 video recording
+- Automatic timestamped session folders
+- Automatic MediaPipe model download
+- Dynamic background noise calibration
+- Local speech-to-speech English teacher (Whisper + Ollama + TTS)
 
-### 🔄 En Progreso
-- Soporte multiidioma configurable (actualmente `en-US`)
-- Overlay de feedback visual en tiempo real (texto reconocido sobre el video)
+### 🔄 In progress
+- Configurable language (currently `en-US`)
+- Real-time visual feedback (recognized text over the video)
 
-### 📋 Planeado
-- Transcripción offline con **Whisper local** (sin dependencia de Google API)
-- Soporte de múltiples gestos (pausa, reinicio, cambio de idioma)
-- Interfaz gráfica (GUI) con `tkinter` o `PyQt`
-- Exportación a formatos adicionales (SRT, JSON con timestamps)
-- Modo solo-audio (sin cámara) con comando de voz para detener
-- Dashboard web en tiempo real con WebSockets
+### 📋 Planned
+- Offline transcription with local Whisper in the main recorder too (no Google API)
+- More gestures (pause, restart, switch language)
+- Desktop GUI with `tkinter` or `PyQt`
+- Export to more formats (SRT, JSON with timestamps)
+- Audio-only mode (no camera) with a voice command to stop
+- Real-time web dashboard with WebSockets
 
 ---
 
-## 🤝 Contribuciones
+## 🤝 Contributing
 
-Las contribuciones son bienvenidas. Para cambios mayores, abre un **Issue** primero para discutir lo que deseas cambiar.
+Contributions are welcome. For bigger changes, open an **issue** first to discuss what you'd like to change.
 
 ```bash
-# Flujo recomendado
-git checkout -b feat/mi-mejora
-git commit -m "feat: descripción de la mejora"
-git push origin feat/mi-mejora
-# Abre un Pull Request hacia main
+# Suggested flow
+git checkout -b feat/my-improvement
+git commit -m "feat: describe the improvement"
+git push origin feat/my-improvement
+# Then open a pull request to main
 ```
 
 ---
 
-## 📄 Licencia
+## 📄 License
 
-Este proyecto es Open Source bajo la [Licencia MIT](LICENSE).
+Open source under the [MIT License](LICENSE).
 
 ---
 
 <div align="center">
-  <sub>Hecho con 🎙️ + 👋 por <a href="https://github.com/Javier-Alturo">Javier Alturo</a></sub>
+  <sub>Made with 🎙️ + 👋 by <a href="https://github.com/Javier-Alturo">Javier Alturo</a></sub>
 </div>
